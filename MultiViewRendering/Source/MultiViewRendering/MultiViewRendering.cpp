@@ -1,5 +1,4 @@
 #include "MultiViewRendering.h"
-#include "Engine/MultiViewRenderingDevice.h"
 
 #define LOCTEXT_NAMESPACE "FMultiViewRenderingModule"
 
@@ -15,5 +14,5 @@ bool FMultiViewRenderingModule::SupportsDynamicReloading()
 }
 
 #undef LOCTEXT_NAMESPACE
-	
+
 IMPLEMENT_MODULE(FMultiViewRenderingModule, MultiViewRendering)
