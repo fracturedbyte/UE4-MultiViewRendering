@@ -1,0 +1,62 @@
+// Copyright 1998-2019 Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	PositionOnlyDepthOnlyVertexShader.hlsl: Depth-only vertex shader.
+=============================================================================*/
+
+#include "Common.ush"
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+
+void Main(
+	FPositionOnlyVertexFactoryInput Input,
+	out float4 OutPosition : SV_POSITION
+#if USE_GLOBAL_CLIP_PLANE
+	, out float OutGlobalClipPlaneDistance : SV_ClipDistance
+#endif
+#if INSTANCED_STEREO
+	, uint InstanceId : SV_InstanceID
+	#if !MULTI_VIEW
+		, out float2 OutClipDistance : SV_ClipDistance1 // FB Bulgakov - Instanced Multi View Rendering
+	#else
+		, out uint ViewportIndex : SV_ViewPortArrayIndex
+	#endif
+#endif
+	)
+{
+#if INSTANCED_STEREO
+	uint EyeIndex = GetEyeIndex(InstanceId);
+	ResolvedView = ResolveView(EyeIndex);
+
+	#if !MULTI_VIEW
+		OutClipDistance = 0.0;
+	#else
+		ViewportIndex = EyeIndex;
+	#endif
+#else
+	ResolvedView = ResolveView();
+#endif
+
+	float4 WorldPos = VertexFactoryGetWorldPosition(Input);
+
+	ISOLATE
+	{
+	#if ODS_CAPTURE
+		float3 ODS = OffsetODS(WorldPos.xyz, ResolvedView.TranslatedWorldCameraOrigin.xyz, ResolvedView.StereoIPD);
+		OutPosition = INVARIANT(mul(float4(WorldPos.xyz + ODS, 1.0), ResolvedView.TranslatedWorldToClip));
+	#else
+		OutPosition = INVARIANT(mul(WorldPos, ResolvedView.TranslatedWorldToClip));
+	#endif
+	}
+
+	#if INSTANCED_STEREO && !MULTI_VIEW
+	BRANCH 
+	if (IsInstancedStereo())  
+	{
+		OutClipDistance = ClipInstancingRendering(OutPosition, EyeIndex); // FB Bulgakov - Instanced Multi View Rendering
+	}
+	#endif
+#if USE_GLOBAL_CLIP_PLANE
+	OutGlobalClipPlaneDistance = dot(ResolvedView.GlobalClippingPlane, float4(WorldPos.xyz - ResolvedView.PreViewTranslation.xyz, 1));
+#endif
+}

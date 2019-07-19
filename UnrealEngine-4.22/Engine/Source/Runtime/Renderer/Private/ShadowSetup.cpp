@@ -1265,19 +1265,6 @@ void FProjectedShadowInfo::SetupMeshDrawCommandsForProjectionStenciling(FSceneRe
 
 			// Pre-shadows mask by receiver elements, self-shadow mask by subject elements.
 			// Note that self-shadow pre-shadows still mask by receiver elements.
-			const TArray<FMeshBatchAndRelevance, SceneRenderingAllocator>& ProjectionStencilingDynamicMeshElements = bPreShadow ? DynamicReceiverMeshElements : DynamicSubjectMeshElements;
-
-			const int32 NumDynamicMeshBatches = ProjectionStencilingDynamicMeshElements.Num();
-
-			for (int32 MeshIndex = 0; MeshIndex < NumDynamicMeshBatches; MeshIndex++)
-			{
-				const FMeshBatchAndRelevance& MeshAndRelevance = ProjectionStencilingDynamicMeshElements[MeshIndex];
-				check(!MeshAndRelevance.Mesh->bRequiresPerElementVisibility);
-				const uint64 BatchElementMask = ~0ull;
-
-				DepthPassMeshProcessor.AddMeshBatch(*MeshAndRelevance.Mesh, BatchElementMask, MeshAndRelevance.PrimitiveSceneProxy);
-			}
-
 			const PrimitiveArrayType& MaskPrimitives = bPreShadow ? ReceiverPrimitives : DynamicSubjectPrimitives;
 
 			for (int32 PrimitiveIndex = 0, PrimitiveCount = MaskPrimitives.Num(); PrimitiveIndex < PrimitiveCount; PrimitiveIndex++)
@@ -1301,6 +1288,20 @@ void FProjectedShadowInfo::SetupMeshDrawCommandsForProjectionStenciling(FSceneRe
 							}
 						}
 					}
+
+					if (ViewRelevance.bRenderInMainPass && ViewRelevance.bDynamicRelevance)
+					{
+						const FInt32Range MeshBatchRange = View.GetDynamicMeshElementRange(ReceiverPrimitiveSceneInfo->GetIndex());
+
+						for (int32 MeshBatchIndex = MeshBatchRange.GetLowerBoundValue(); MeshBatchIndex < MeshBatchRange.GetUpperBoundValue(); ++MeshBatchIndex)
+						{
+							const FMeshBatchAndRelevance& MeshAndRelevance = View.DynamicMeshElements[MeshBatchIndex];
+							check(!MeshAndRelevance.Mesh->bRequiresPerElementVisibility);
+							const uint64 BatchElementMask = ~0ull;
+
+							DepthPassMeshProcessor.AddMeshBatch(*MeshAndRelevance.Mesh, BatchElementMask, MeshAndRelevance.PrimitiveSceneProxy);
+						}
+					}
 				}
 			}
 
@@ -1318,12 +1319,13 @@ void FProjectedShadowInfo::SetupMeshDrawCommandsForProjectionStenciling(FSceneRe
 
 			// If instanced stereo is enabled, we need to render each view of the stereo pair using the instanced stereo transform to avoid bias issues.
 			// TODO: Support instanced stereo properly in the projection stenciling pass.
-			const uint32 InstanceFactor = View.bIsInstancedStereoEnabled && !View.bIsMultiViewEnabled && View.StereoPass != eSSP_FULL ? 2 : 1;
+			const uint32 InstanceFactor = View.bIsInstancedStereoEnabled && !View.bIsMultiViewEnabled && View.StereoPass != eSSP_FULL ? View.Family->Views.Num() : 1; // FB Bulgakov - Instanced Multi View Rendering
 			SortAndMergeDynamicPassMeshDrawCommands(Renderer.FeatureLevel, ProjectionStencilingPass.VisibleMeshDrawCommands, DynamicMeshDrawCommandStorage, ProjectionStencilingPass.PrimitiveIdVertexBuffer, InstanceFactor);
 		}
 	}
 }
 
+extern FRWLock OneFrameIdTableHotfixRWLock;
 void FProjectedShadowInfo::ApplyViewOverridesToMeshDrawCommands(const FViewInfo& View, FMeshCommandOneFrameArray& VisibleMeshDrawCommands)
 {
 	if (View.bReverseCulling || View.bRenderSceneTwoSided)
@@ -1343,9 +1345,12 @@ void FProjectedShadowInfo::ApplyViewOverridesToMeshDrawCommands(const FViewInfo&
 			NewMeshCommand = MeshCommand;
 
 			const ERasterizerCullMode LocalCullMode = View.bRenderSceneTwoSided ? CM_None : View.bReverseCulling ? FMeshPassProcessor::InverseCullMode(VisibleMeshDrawCommand.MeshCullMode) : VisibleMeshDrawCommand.MeshCullMode;
-			FGraphicsMinimalPipelineStateInitializer PipelineState = MeshCommand.CachedPipelineId.GetPipelineState();
+			FGraphicsMinimalPipelineStateInitializer PipelineState;
+			{
+				FRWScopeLock ScopeLock(OneFrameIdTableHotfixRWLock, SLT_ReadOnly);
+				PipelineState = MeshCommand.CachedPipelineId.GetPipelineState();
+			}
 			PipelineState.RasterizerState = GetStaticRasterizerState<true>(VisibleMeshDrawCommand.MeshFillMode, LocalCullMode);
-
 			const FGraphicsMinimalPipelineStateId PipelineId = FGraphicsMinimalPipelineStateId::GetOneFrameId(PipelineState);
 			NewMeshCommand.Finalize(PipelineId, nullptr);
 
@@ -1406,11 +1411,6 @@ void FProjectedShadowInfo::GatherDynamicMeshElements(FSceneRenderer& Renderer, F
 		}
 
 		ShadowDepthView->DrawDynamicFlags = EDrawDynamicFlags::None;
-
-		int32 NumDynamicReceiverMeshElements = 0;
-		ShadowDepthView->SetDynamicMeshElementsShadowCullFrustum(&ReceiverFrustum);
-		GatherDynamicMeshElementsArray(ShadowDepthView, Renderer, DynamicIndexBuffer, DynamicVertexBuffer, DynamicReadBuffer, 
-			ReceiverPrimitives, ReusedViewsArray, DynamicReceiverMeshElements, NumDynamicReceiverMeshElements);
 
 		int32 NumDynamicSubjectTranslucentMeshElements = 0;
 		ShadowDepthView->SetDynamicMeshElementsShadowCullFrustum(&CasterFrustum);
@@ -1538,7 +1538,6 @@ void FProjectedShadowInfo::ClearTransientArrays()
 	DynamicSubjectPrimitives.Empty();
 	ReceiverPrimitives.Empty();
 	DynamicSubjectMeshElements.Empty();
-	DynamicReceiverMeshElements.Empty();
 	DynamicSubjectTranslucentMeshElements.Empty();
 
 	ShadowDepthPassVisibleCommands.Empty();
@@ -2758,7 +2757,7 @@ void FSceneRenderer::InitProjectedShadowVisibility(FRHICommandListImmediate& RHI
 					const bool bIsValidForView = //View.StereoPass == eSSP_RIGHT_EYE
 						//&& Views.IsValidIndex(ViewIndex - 1)
 						//&& Views[ViewIndex - 1].StereoPass == eSSP_LEFT_EYE
-						/*&& */ProjectedShadowInfo.FadeAlphas.IsValidIndex(ViewIndex)
+						/*&&*/ ProjectedShadowInfo.FadeAlphas.IsValidIndex(ViewIndex)
 						&& ProjectedShadowInfo.FadeAlphas[ViewIndex] == 1.0f;
 					// FB Bulgakov End
 
@@ -3327,6 +3326,11 @@ void FSceneRenderer::AddViewDependentWholeSceneShadowsForView(
 		FadeAlphas.Init(0.0f, Views.Num());
 		FadeAlphas[ViewIndex] = 1.0f;
 
+		for (int i = 0; i < Views.Num(); ++i)
+		{
+			FadeAlphas[i] = 1.0f;
+		}
+
 		// FB Bulgakov Begin - Disable shadow sharing between eyes
 		//if (View.StereoPass == eSSP_LEFT_EYE
 		//	&& Views.IsValidIndex(ViewIndex + 1)
@@ -3336,7 +3340,7 @@ void FSceneRenderer::AddViewDependentWholeSceneShadowsForView(
 		//}		
 
 		// If rendering in stereo mode we render shadow depths only for the left eye, but project for both eyes!
-		//if (View.StereoPass != eSSP_RIGHT_EYE) // shadow fix
+		if (View.StereoPass == eSSP_RIGHT_EYE) // shadow fix
 		// FB Bulgakov End
 		{
 			const bool bExtraDistanceFieldCascade = LightSceneInfo.Proxy->ShouldCreateRayTracedCascade(View.GetFeatureLevel(), LightSceneInfo.IsPrecomputedLightingValid(), View.MaxShadowCascades);
