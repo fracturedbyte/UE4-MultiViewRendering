@@ -19,4 +19,10 @@ public:
 	{
 		return FModuleManager::Get().IsModuleLoaded("MultiViewRendering");
 	}
+
+private:
+
+	bool HandleSettingsSaved();
+	void RegisterSettings();
+	void UnregisterSettings();
 };

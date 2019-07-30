@@ -31,5 +31,5 @@ private:
 
 	float Aspect = 1920.0f / 1080.0f;
 	int32 nScreen = 3;
-	float FOV = 50; // It looks like it is the best value for triple screen
+	//float FOV = 45; // It looks like it is the best value for triple screen
 };

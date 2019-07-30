@@ -1,4 +1,5 @@
 #include "MultiViewRenderingDevice.h"
+#include "MultiViewRenderingSettings.h"
 
 FMultiViewRenderingDevice::FMultiViewRenderingDevice()
 {
@@ -73,32 +74,48 @@ int32 FMultiViewRenderingDevice::GetDesiredNumberOfViews(bool bStereoRequested) 
 
 void FMultiViewRenderingDevice::CalculateStereoViewOffset(const enum EStereoscopicPass StereoPassType, FRotator& ViewRotation, const float WorldToMeters, FVector& ViewLocation)
 {
+	float ScreenFOV = 45;
+	float ScreenPadding = 0;
+	UMultiViewRenderingSettings* Settings = GetMutableDefault<UMultiViewRenderingSettings>();
+	if (Settings)
+	{
+		ScreenFOV = Settings->ScreenFOV;
+		ScreenPadding = 2.0f * Settings->Bezel / Settings->ScreenWidth * ScreenFOV;
+	}
+
 	float RotationMultiplier = StereoPassType - eSSP_RIGHT_EYE;
 
 	FVector dir = ViewRotation.Vector();
 	FVector up = ViewRotation.RotateVector(FVector::UpVector);
-	FVector dir2 = dir.RotateAngleAxis(FOV * RotationMultiplier, up);
+	FVector dir2 = dir.RotateAngleAxis((ScreenFOV + ScreenPadding) * RotationMultiplier, up);
 
 	ViewRotation = FRotationMatrix::MakeFromXZ(dir2, up).Rotator();
 
 	// We assume that physical monitor width is 55 cm
 	// For correct visual experience user should be at distance 47.63f (DistanceToMonitorFOV60) at FOV 60.
 	// This code updates view location if user head is located on other distance from monitor
-	const bool bUpdateLocation = true;
+	/*const bool bUpdateLocation = true;
 	if (bUpdateLocation)
 	{
 		const float DistanceFromViewerToMonitor = 66.0f; // in cm
-		const float DistanceToMonitorFOV60 = 47.63f; // in cm
+		const float DistanceToMonitorFOV60 = 66;// *47.63f; // in cm
 		//float CorrectionLength = (DistanceFromViewerToMonitor - DistanceToMonitorFOV60) / 100.0f * WorldToMeters;
 		float CorrectionLength = (DistanceFromViewerToMonitor - DistanceToMonitorFOV60) * GNearClippingPlane / DistanceToMonitorFOV60;
 
 		ViewLocation += (dir2 - dir) * CorrectionLength;
-	}
+	}*/
 }
 
 FMatrix FMultiViewRenderingDevice::GetStereoProjectionMatrix(const enum EStereoscopicPass StereoPassType) const
 {
-	const float HalfFov = FMath::DegreesToRadians(FOV) / 2.f;
+	float ScreenFOV = 45;
+	UMultiViewRenderingSettings* Settings = GetMutableDefault<UMultiViewRenderingSettings>();
+	if (Settings)
+	{
+		ScreenFOV = Settings->ScreenFOV;
+	}
+
+	const float HalfFov = FMath::DegreesToRadians(ScreenFOV) / 2.f;
 	const float XS = 1.0f / FMath::Tan(HalfFov);
 	const float YS = Aspect / FMath::Tan(HalfFov);
 	const float NearZ = GNearClippingPlane;

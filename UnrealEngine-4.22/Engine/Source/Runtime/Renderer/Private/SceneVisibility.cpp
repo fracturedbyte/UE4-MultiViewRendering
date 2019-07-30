@@ -2704,7 +2704,7 @@ void FSceneRenderer::GatherDynamicMeshElements(
 			if (ViewMask != 0)
 			{
 				// Don't cull a single eye when drawing a stereo pair
-				const uint8 ViewMaskFinal = (bIsInstancedStereo) ? ViewMask | 0x3 : ViewMask;
+				const uint8 ViewMaskFinal = (bIsInstancedStereo) ? ViewMask | 0x7 : ViewMask;
 
 				FPrimitiveSceneInfo* PrimitiveSceneInfo = InScene->Primitives[PrimitiveIndex];
 				Collector.SetPrimitive(PrimitiveSceneInfo->Proxy, PrimitiveSceneInfo->DefaultDynamicHitProxyId);
