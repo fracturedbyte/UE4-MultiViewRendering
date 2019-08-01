@@ -79,7 +79,7 @@ void FMultiViewRenderingDevice::CalculateStereoViewOffset(const enum EStereoscop
 	UMultiViewRenderingSettings* Settings = GetMutableDefault<UMultiViewRenderingSettings>();
 	if (Settings)
 	{
-		ScreenFOV = Settings->ScreenFOV;
+		ScreenFOV = Settings->GetScreenFOV();
 		ScreenPadding = 2.0f * Settings->Bezel / Settings->ScreenWidth * ScreenFOV;
 	}
 
@@ -90,20 +90,6 @@ void FMultiViewRenderingDevice::CalculateStereoViewOffset(const enum EStereoscop
 	FVector dir2 = dir.RotateAngleAxis((ScreenFOV + ScreenPadding) * RotationMultiplier, up);
 
 	ViewRotation = FRotationMatrix::MakeFromXZ(dir2, up).Rotator();
-
-	// We assume that physical monitor width is 55 cm
-	// For correct visual experience user should be at distance 47.63f (DistanceToMonitorFOV60) at FOV 60.
-	// This code updates view location if user head is located on other distance from monitor
-	/*const bool bUpdateLocation = true;
-	if (bUpdateLocation)
-	{
-		const float DistanceFromViewerToMonitor = 66.0f; // in cm
-		const float DistanceToMonitorFOV60 = 66;// *47.63f; // in cm
-		//float CorrectionLength = (DistanceFromViewerToMonitor - DistanceToMonitorFOV60) / 100.0f * WorldToMeters;
-		float CorrectionLength = (DistanceFromViewerToMonitor - DistanceToMonitorFOV60) * GNearClippingPlane / DistanceToMonitorFOV60;
-
-		ViewLocation += (dir2 - dir) * CorrectionLength;
-	}*/
 }
 
 FMatrix FMultiViewRenderingDevice::GetStereoProjectionMatrix(const enum EStereoscopicPass StereoPassType) const
@@ -112,7 +98,7 @@ FMatrix FMultiViewRenderingDevice::GetStereoProjectionMatrix(const enum EStereos
 	UMultiViewRenderingSettings* Settings = GetMutableDefault<UMultiViewRenderingSettings>();
 	if (Settings)
 	{
-		ScreenFOV = Settings->ScreenFOV;
+		ScreenFOV = Settings->GetScreenFOV();
 	}
 
 	const float HalfFov = FMath::DegreesToRadians(ScreenFOV) / 2.f;

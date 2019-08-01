@@ -590,10 +590,14 @@ private:
 		float AsymmetricFOVScaleX = ProjectionMatrix.M[2][0];
 		float AsymmetricFOVScaleY = ProjectionMatrix.M[2][1];
 
-		// FB Bulgakov Begin - Shared CSM hack for Triple screen (beta)
-		/*static float t2 = 3;
-		HalfHorizontalFOV *= t2;
-		HalfVerticalFOV *= t2;*/
+		// FB Bulgakov Begin - Shared CSM
+		if (View.Family->Views.IsValidIndex(0) &&
+			View.Family->Views[0]->IsInstancedStereoPass() &&
+			View.StereoPass == eSSP_RIGHT_EYE)
+		{
+			int nNumViews = View.Family->Views.Num();
+			HalfHorizontalFOV *= nNumViews;
+		}
 		// FB Bulgakov End
 
 		// Near plane
