@@ -1021,6 +1021,8 @@ struct FFoliageRenderInstanceParams
 	}
 };
 
+const int32 nMaxOcclusionViews = 3;
+
 struct FFoliageCullInstanceParams : public FFoliageRenderInstanceParams
 {
 	FConvexVolume ViewFrustumLocal;
@@ -1032,21 +1034,26 @@ struct FFoliageCullInstanceParams : public FFoliageRenderInstanceParams
 	int32 LODs;
 	float LODPlanesMax[MAX_STATIC_MESH_LODS];
 	float LODPlanesMin[MAX_STATIC_MESH_LODS];
-	int32 FirstOcclusionNode;
-	int32 LastOcclusionNode;
-	const TArray<bool>* OcclusionResults;
-	int32 OcclusionResultsStart;
+	int32 FirstOcclusionNode[nMaxOcclusionViews];
+	int32 LastOcclusionNode[nMaxOcclusionViews];
+	const TArray<bool>* OcclusionResults[nMaxOcclusionViews];
+	int32 OcclusionResultsStart[nMaxOcclusionViews];
+	int32 nOcclusionViews;
 
 
 
 	FFoliageCullInstanceParams(bool InbNeedsSingleLODRuns, bool InbNeedsMultipleLODRuns, bool InbOverestimate, const TArray<FClusterNode>& InTree)
 	:	FFoliageRenderInstanceParams(InbNeedsSingleLODRuns, InbNeedsMultipleLODRuns, InbOverestimate)
 	,	Tree(InTree)
-	,	FirstOcclusionNode(-1)
-	,	LastOcclusionNode(-1)
-	,	OcclusionResults(nullptr)
-	,	OcclusionResultsStart(0)
+	,	nOcclusionViews(0)
 	{
+		for (int32 i = 0; i < nMaxOcclusionViews; ++i)
+		{
+			FirstOcclusionNode[i] = -1;
+			LastOcclusionNode[i] = -1;
+			OcclusionResults[i] = nullptr;
+			OcclusionResultsStart[i] = 0;
+		}
 	}
 };
 
@@ -1193,21 +1200,36 @@ void FHierarchicalStaticMeshSceneProxy::Traverse(const FFoliageCullInstanceParam
 		}
 	}
 
-	if (Index >= Params.FirstOcclusionNode && Index <= Params.LastOcclusionNode)
+	bool bCulled = true;
+	for (int i = 0; i < Params.nOcclusionViews; ++i)
+	{
+		if (Index >= Params.FirstOcclusionNode[i] && Index <= Params.LastOcclusionNode[i])
 	{
 		check(Params.OcclusionResults != NULL);
-		const TArray<bool>& OcclusionResultsArray = *Params.OcclusionResults;
-		if (OcclusionResultsArray[Params.OcclusionResultsStart + Index - Params.FirstOcclusionNode])
+			const TArray<bool>& OcclusionResultsArray = *Params.OcclusionResults[i];
+			if (!OcclusionResultsArray[Params.OcclusionResultsStart[i] + Index - Params.FirstOcclusionNode[i]])
+			{
+				bCulled = false;
+				break;
+			}
+		}
+		else
+		{
+			bCulled = false;
+			break;
+		}
+	}
+
+	if (bCulled)
 		{
 			INC_DWORD_STAT_BY(STAT_OcclusionCulledFoliageInstances, 1 + Node.LastInstance - Node.FirstInstance);
 			return;
 		}
-	}
 
 	bool bShouldGroup = Node.FirstChild < 0
 		|| ((Node.LastInstance - Node.FirstInstance + 1) < Params.MinInstancesToSplit[MinLOD]
 			&& CanGroup(Node.BoundMin, Node.BoundMax, Params.ViewOriginInLocalZero, Params.ViewOriginInLocalOne, Params.LODPlanesMax[Params.LODs - 1]));
-	bool bSplit = (!bFullyContained || MinLOD < MaxLOD || Index < Params.FirstOcclusionNode)
+	bool bSplit = (!bFullyContained || MinLOD < MaxLOD || Index < Params.FirstOcclusionNode[0])
 		&& !bShouldGroup;
 
 	if (!bSplit)
@@ -1655,7 +1677,21 @@ void FHierarchicalStaticMeshSceneProxy::GetDynamicMeshElements(const TArray<cons
 
 				if (FirstOcclusionNode >= 0 && LastOcclusionNode >= 0 && FirstOcclusionNode <= LastOcclusionNode)
 				{
-					uint32 ViewId = View->GetViewKey();
+					int32 StartOcclusionView = ViewIndex;
+					int32 NumOcclusionViews = 1;
+					if ((Views[0]->IsInstancedStereoPass() || Views[0]->bIsMobileMultiViewEnabled) && ViewIndex == 0)
+					{
+						StartOcclusionView = 0;
+						NumOcclusionViews = Views.Num();
+					}
+
+					InstanceParams.nOcclusionViews = NumOcclusionViews;
+
+					for (int j = 0; j < NumOcclusionViews; ++j)
+					{
+						int32 OcclusionViewIndex = StartOcclusionView + j;
+
+						uint32 ViewId = Views[OcclusionViewIndex]->GetViewKey();
 					const FFoliageOcclusionResults* OldResults = OcclusionResults.Find(ViewId);
 					if (OldResults &&
 						OldResults->FrameNumberRenderThread == GFrameNumberRenderThread &&
@@ -1666,10 +1702,11 @@ void FHierarchicalStaticMeshSceneProxy::GetDynamicMeshElements(const TArray<cons
 						OldResults->Results.IsValidIndex(OldResults->ResultsStart + LastOcclusionNode - FirstOcclusionNode)
 						)
 					{
-						InstanceParams.FirstOcclusionNode = FirstOcclusionNode;
-						InstanceParams.LastOcclusionNode = LastOcclusionNode;
-						InstanceParams.OcclusionResults = &OldResults->Results;
-						InstanceParams.OcclusionResultsStart = OldResults->ResultsStart;
+							InstanceParams.FirstOcclusionNode[j] = FirstOcclusionNode;
+							InstanceParams.LastOcclusionNode[j] = LastOcclusionNode;
+							InstanceParams.OcclusionResults[j] = &OldResults->Results;
+							InstanceParams.OcclusionResultsStart[j] = OldResults->ResultsStart;
+						}
 					}
 				}
 
