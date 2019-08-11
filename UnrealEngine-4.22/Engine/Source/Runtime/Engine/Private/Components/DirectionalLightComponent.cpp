@@ -571,8 +571,15 @@ private:
 		}
 	}
 
-	virtual FSphere GetShadowSplitBoundsDepthRange(const FSceneView& View, FVector ViewOrigin, float SplitNear, float SplitFar, FShadowCascadeSettings* OutCascadeSettings) const override
+	FSphere GetShadowSplitBoundsDepthRangeTripleScreen(const FSceneView& MainView, FVector ViewOrigin, float SplitNear, float SplitFar, FShadowCascadeSettings* OutCascadeSettings) const
 	{
+		// Get the 8 corners of the cascade's camera frustum, in world space
+		int32 nNumView = FMath::Max(3, MainView.Family->Views.Num());
+		FVector CascadeFrustumVertsForEachView[8][3];
+		for (int i = 0; i < nNumView; ++i)
+	{
+			const FSceneView& View = *MainView.Family->Views[i];
+
 		const FMatrix& ViewMatrix = View.ShadowViewMatrices.GetViewMatrix();
 		const FMatrix& ProjectionMatrix = View.ShadowViewMatrices.GetProjectionMatrix();
 
@@ -590,15 +597,129 @@ private:
 		float AsymmetricFOVScaleX = ProjectionMatrix.M[2][0];
 		float AsymmetricFOVScaleY = ProjectionMatrix.M[2][1];
 
-		// FB Bulgakov Begin - Shared CSM
+			if (&View == &MainView)
+			{
+				HalfHorizontalFOV *= 3;
+			}
+
+			// Near plane
+			const float StartHorizontalTotalLength = SplitNear * FMath::Tan(HalfHorizontalFOV);
+			const float StartVerticalTotalLength = SplitNear * FMath::Tan(HalfVerticalFOV);
+			const FVector StartCameraLeftOffset = ViewMatrix.GetColumn(0) * -StartHorizontalTotalLength * (1 + AsymmetricFOVScaleX);
+			const FVector StartCameraRightOffset = ViewMatrix.GetColumn(0) *  StartHorizontalTotalLength * (1 - AsymmetricFOVScaleX);
+			const FVector StartCameraBottomOffset = ViewMatrix.GetColumn(1) * -StartVerticalTotalLength * (1 + AsymmetricFOVScaleY);
+			const FVector StartCameraTopOffset = ViewMatrix.GetColumn(1) *  StartVerticalTotalLength * (1 - AsymmetricFOVScaleY);
+			// Far plane
+			const float EndHorizontalTotalLength = SplitFar * FMath::Tan(HalfHorizontalFOV);
+			const float EndVerticalTotalLength = SplitFar * FMath::Tan(HalfVerticalFOV);
+			const FVector EndCameraLeftOffset = ViewMatrix.GetColumn(0) * -EndHorizontalTotalLength * (1 + AsymmetricFOVScaleX);
+			const FVector EndCameraRightOffset = ViewMatrix.GetColumn(0) *  EndHorizontalTotalLength * (1 - AsymmetricFOVScaleX);
+			const FVector EndCameraBottomOffset = ViewMatrix.GetColumn(1) * -EndVerticalTotalLength * (1 + AsymmetricFOVScaleY);
+			const FVector EndCameraTopOffset = ViewMatrix.GetColumn(1) *  EndVerticalTotalLength * (1 - AsymmetricFOVScaleY);
+
+			
+			CascadeFrustumVertsForEachView[0][i] = ViewOrigin + CameraDirection * SplitNear + StartCameraRightOffset + StartCameraTopOffset;    // 0 Near Top    Right
+			CascadeFrustumVertsForEachView[1][i] = ViewOrigin + CameraDirection * SplitNear + StartCameraRightOffset + StartCameraBottomOffset; // 1 Near Bottom Right
+			CascadeFrustumVertsForEachView[2][i] = ViewOrigin + CameraDirection * SplitNear + StartCameraLeftOffset + StartCameraTopOffset;     // 2 Near Top    Left
+			CascadeFrustumVertsForEachView[3][i] = ViewOrigin + CameraDirection * SplitNear + StartCameraLeftOffset + StartCameraBottomOffset;  // 3 Near Bottom Left
+			CascadeFrustumVertsForEachView[4][i] = ViewOrigin + CameraDirection * SplitFar + EndCameraRightOffset + EndCameraTopOffset;       // 4 Far  Top    Right
+			CascadeFrustumVertsForEachView[5][i] = ViewOrigin + CameraDirection * SplitFar + EndCameraRightOffset + EndCameraBottomOffset;    // 5 Far  Bottom Right
+			CascadeFrustumVertsForEachView[6][i] = ViewOrigin + CameraDirection * SplitFar + EndCameraLeftOffset + EndCameraTopOffset;       // 6 Far  Top    Left
+			CascadeFrustumVertsForEachView[7][i] = ViewOrigin + CameraDirection * SplitFar + EndCameraLeftOffset + EndCameraBottomOffset;    // 7 Far  Bottom Left
+		}
+
+
+
+		const FMatrix& ViewMatrix = MainView.ShadowViewMatrices.GetViewMatrix();
+		const FMatrix& ProjectionMatrix = MainView.ShadowViewMatrices.GetProjectionMatrix();
+
+		const FVector CameraDirection = ViewMatrix.GetColumn(2);
+		const FVector LightDirection = -GetDirection();
+
+		// Support asymmetric projection
+		// Get FOV and AspectRatio from the view's projection matrix.
+		float AspectRatio = ProjectionMatrix.M[1][1] / ProjectionMatrix.M[0][0];
+		bool bIsPerspectiveProjection = MainView.ShadowViewMatrices.IsPerspectiveProjection();
+
+		// Build the camera frustum for this cascade
+		float HalfHorizontalFOV = bIsPerspectiveProjection ? FMath::Atan(1.0f / ProjectionMatrix.M[0][0]) : PI / 4.0f;
+		float HalfVerticalFOV = bIsPerspectiveProjection ? FMath::Atan(1.0f / ProjectionMatrix.M[1][1]) : FMath::Atan((FMath::Tan(PI / 4.0f) / AspectRatio));
+
+		// Get the 8 corners of the cascade's camera frustum, in world space
+		FVector CascadeFrustumVerts[8];
+		CascadeFrustumVerts[0] = CascadeFrustumVertsForEachView[0][2]; // 0 Near Top    Right
+		CascadeFrustumVerts[1] = CascadeFrustumVertsForEachView[1][2]; // 1 Near Bottom Right
+		CascadeFrustumVerts[2] = CascadeFrustumVertsForEachView[2][0]; // 2 Near Top    Left
+		CascadeFrustumVerts[3] = CascadeFrustumVertsForEachView[3][0]; // 3 Near Bottom Left
+		CascadeFrustumVerts[4] = CascadeFrustumVertsForEachView[4][1]; // 4 Far  Top    Right
+		CascadeFrustumVerts[5] = CascadeFrustumVertsForEachView[5][1]; // 5 Far  Bottom Right
+		CascadeFrustumVerts[6] = CascadeFrustumVertsForEachView[6][1]; // 6 Far  Top    Left
+		CascadeFrustumVerts[7] = CascadeFrustumVertsForEachView[7][1]; // 7 Far  Bottom Left
+
+		// Fit a bounding sphere around the world space camera cascade frustum.
+		// Compute the sphere ideal centre point given the FOV and near/far.
+		float TanHalfFOVx = FMath::Tan(HalfHorizontalFOV);
+		float TanHalfFOVy = FMath::Tan(HalfVerticalFOV);
+		float FrustumLength = SplitFar - SplitNear;
+
+		float FarX = TanHalfFOVx * SplitFar;
+		float FarY = TanHalfFOVy * SplitFar;
+		float DiagonalASq = FarX * FarX + FarY * FarY;
+
+		float NearX = TanHalfFOVx * SplitNear;
+		float NearY = TanHalfFOVy * SplitNear;
+		float DiagonalBSq = NearX * NearX + NearY * NearY;
+
+		// Calculate the ideal bounding sphere for the subfrustum.
+		// Fx  = (Db^2 - da^2) / 2Fl + Fl / 2 
+		// (where Da is the far diagonal, and Db is the near, and Fl is the frustum length)
+		float OptimalOffset = (DiagonalBSq - DiagonalASq) / (2.0f * FrustumLength) + FrustumLength * 0.5f;
+		float CentreZ = SplitFar - OptimalOffset;
+		CentreZ = FMath::Clamp(CentreZ, SplitNear, SplitFar);
+
+		FSphere CascadeSphere(ViewOrigin + CameraDirection * CentreZ, 0);
+		for (int32 Index = 0; Index < 8; Index++)
+		{
+			CascadeSphere.W = FMath::Max(CascadeSphere.W, FVector::DistSquared(CascadeFrustumVerts[Index], CascadeSphere.Center));
+		}
+
+		// Don't allow the bounds to reach 0 (INF)
+		CascadeSphere.W = FMath::Max(FMath::Sqrt(CascadeSphere.W), 1.0f);
+
+		if (OutCascadeSettings)
+		{
+			// this function is needed, since it's also called by the LPV code.
+			ComputeShadowCullingVolume(MainView.bReverseCulling, CascadeFrustumVerts, LightDirection, OutCascadeSettings->ShadowBoundsAccurate, OutCascadeSettings->NearFrustumPlane, OutCascadeSettings->FarFrustumPlane);
+		}
+
+		return CascadeSphere;
+	}
+
+	virtual FSphere GetShadowSplitBoundsDepthRange(const FSceneView& View, FVector ViewOrigin, float SplitNear, float SplitFar, FShadowCascadeSettings* OutCascadeSettings) const override
+	{
 		if (View.Family->Views.IsValidIndex(0) &&
 			View.Family->Views[0]->IsInstancedStereoPass() &&
 			View.StereoPass == eSSP_RIGHT_EYE)
 		{
-			int nNumViews = View.Family->Views.Num();
-			HalfHorizontalFOV *= nNumViews;
+			return GetShadowSplitBoundsDepthRangeTripleScreen(View, ViewOrigin, SplitNear, SplitFar, OutCascadeSettings);
 		}
-		// FB Bulgakov End
+
+		const FMatrix& ViewMatrix = View.ShadowViewMatrices.GetViewMatrix();
+		const FMatrix& ProjectionMatrix = View.ShadowViewMatrices.GetProjectionMatrix();
+
+		const FVector CameraDirection = ViewMatrix.GetColumn(2);
+		const FVector LightDirection = -GetDirection();
+
+		// Support asymmetric projection
+		// Get FOV and AspectRatio from the view's projection matrix.
+		float AspectRatio = ProjectionMatrix.M[1][1] / ProjectionMatrix.M[0][0];
+		bool bIsPerspectiveProjection = View.ShadowViewMatrices.IsPerspectiveProjection();
+
+		// Build the camera frustum for this cascade
+		float HalfHorizontalFOV = bIsPerspectiveProjection ? FMath::Atan(1.0f / ProjectionMatrix.M[0][0]) : PI / 4.0f;
+		float HalfVerticalFOV = bIsPerspectiveProjection ? FMath::Atan(1.0f / ProjectionMatrix.M[1][1]) : FMath::Atan((FMath::Tan(PI / 4.0f) / AspectRatio));
+		float AsymmetricFOVScaleX = ProjectionMatrix.M[2][0];
+		float AsymmetricFOVScaleY = ProjectionMatrix.M[2][1];
 
 		// Near plane
 		const float StartHorizontalTotalLength = SplitNear * FMath::Tan(HalfHorizontalFOV);
