@@ -90,8 +90,10 @@ float2 ClipInstancingRendering(inout float4 Position, int EyeIndex)
 	float ViewRatio = 1.0 / View.NumViews;
 	int EyeOffsetIndexShift = 2 * (View.NumViews - 2);
 	Position.x *= ViewRatio * ResolvedView.HMDEyePaddingOffset;
+#if INSTANCED_STEREO
 	Position.x += (EyeOffsetScale[EyeOffsetIndexShift + EyeIndex] * Position.w) * (1.0f - ViewRatio * ResolvedView.HMDEyePaddingOffset);
-
+#endif
+	
 	return OutClipDistances;
 }
 // FB Bulgakov End
