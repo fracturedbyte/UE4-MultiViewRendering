@@ -1,22 +1,27 @@
 #include "MultiViewRendering.h"
 #include "Engine/MultiViewRenderingSettings.h"
+#if WITH_EDITOR
 #include "ISettingsModule.h"
 #include "ISettingsSection.h"
 #include "ISettingsContainer.h"
-
+#endif
 #define LOCTEXT_NAMESPACE "FMultiViewRenderingModule"
 
 void FMultiViewRenderingModule::StartupModule()
 {
+#if WITH_EDITOR
 	RegisterSettings();
+#endif
 }
 
 void FMultiViewRenderingModule::ShutdownModule()
 {
+#if WITH_EDITOR
 	if (UObjectInitialized())
 	{
 		UnregisterSettings();
 	}
+#endif
 }
 
 bool FMultiViewRenderingModule::SupportsDynamicReloading()
@@ -26,6 +31,7 @@ bool FMultiViewRenderingModule::SupportsDynamicReloading()
 
 bool FMultiViewRenderingModule::HandleSettingsSaved()
 {
+#if WITH_EDITOR
 	UMultiViewRenderingSettings* Settings = GetMutableDefault<UMultiViewRenderingSettings>();
 	bool ResaveSettings = false;
 
@@ -36,12 +42,13 @@ bool FMultiViewRenderingModule::HandleSettingsSaved()
 	{
 		Settings->SaveConfig();
 	}
-
+#endif
 	return true;
 }
 
 void FMultiViewRenderingModule::RegisterSettings()
 {
+#if WITH_EDITOR
 	if (ISettingsModule* SettingsModule = FModuleManager::GetModulePtr<ISettingsModule>("Settings"))
 	{
 		// Create the new category
@@ -65,16 +72,19 @@ void FMultiViewRenderingModule::RegisterSettings()
 			SettingsSection->OnModified().BindRaw(this, &FMultiViewRenderingModule::HandleSettingsSaved);
 		}
 	}
+#endif
 }
 
 void FMultiViewRenderingModule::UnregisterSettings()
 {
+#if WITH_EDITOR
 	// Ensure to unregister all of your registered settings here, hot-reload would
 	// otherwise yield unexpected results.
 	if (ISettingsModule* SettingsModule = FModuleManager::GetModulePtr<ISettingsModule>("Settings"))
 	{
 		SettingsModule->UnregisterSettings("Project", "MVR", "General");
 	}
+#endif
 }
 
 #undef LOCTEXT_NAMESPACE
